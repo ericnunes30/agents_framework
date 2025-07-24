@@ -14,7 +14,7 @@ jest.mock('../../src/tools/mcp/MCPConnection.js', () => ({
   }
 }));
 
-import { HybridAgentFrameworkServer } from '../../src/server/hybrid.js';
+import { AgentFrameworkServer } from '../../src/server/index.js';
 import Redis from 'ioredis';
 
 // Mock Redis and other dependencies
@@ -28,8 +28,8 @@ jest.mock('../../src/server/redis.js');
 
 const MockedRedis = Redis as jest.MockedClass<typeof Redis>;
 
-describe('HybridAgentFrameworkServer Integration', () => {
-  let server: HybridAgentFrameworkServer;
+describe('AgentFrameworkServer Integration', () => {
+  let server: AgentFrameworkServer;
   let mockRedis: jest.Mocked<Redis>;
 
   beforeAll(async () => {
@@ -50,7 +50,7 @@ describe('HybridAgentFrameworkServer Integration', () => {
     MockedRedis.mockImplementation(() => mockRedis);
 
     // Create and initialize server
-    server = new HybridAgentFrameworkServer();
+    server = new AgentFrameworkServer();
 
     // Mock the initialize method to avoid actual Redis connections
     jest.spyOn(server as any, 'initialize').mockImplementation(async () => {
@@ -92,16 +92,16 @@ describe('HybridAgentFrameworkServer Integration', () => {
 
   describe('Configuration', () => {
     it('should create server with default configuration', () => {
-      const testServer = new HybridAgentFrameworkServer();
-      expect(testServer).toBeInstanceOf(HybridAgentFrameworkServer);
+      const testServer = new AgentFrameworkServer();
+      expect(testServer).toBeInstanceOf(AgentFrameworkServer);
     });
 
     it('should handle environment variables', () => {
       process.env.PORT = '4000';
       process.env.REDIS_URL = 'redis://test:6379';
       
-      const testServer = new HybridAgentFrameworkServer();
-      expect(testServer).toBeInstanceOf(HybridAgentFrameworkServer);
+      const testServer = new AgentFrameworkServer();
+      expect(testServer).toBeInstanceOf(AgentFrameworkServer);
       
       // Cleanup
       delete process.env.PORT;
@@ -111,7 +111,7 @@ describe('HybridAgentFrameworkServer Integration', () => {
 
   describe('Error Handling', () => {
     it('should handle initialization errors gracefully', async () => {
-      const testServer = new HybridAgentFrameworkServer();
+      const testServer = new AgentFrameworkServer();
       
       // Mock initialization to throw error
       jest.spyOn(testServer as any, 'initialize').mockRejectedValue(new Error('Init failed'));
@@ -120,7 +120,7 @@ describe('HybridAgentFrameworkServer Integration', () => {
     });
 
     it('should handle shutdown errors gracefully', async () => {
-      const testServer = new HybridAgentFrameworkServer();
+      const testServer = new AgentFrameworkServer();
       
       // Initialize with mocked components
       (testServer as any).ttlManager = { stop: jest.fn() };
@@ -144,7 +144,7 @@ describe('HybridAgentFrameworkServer Integration', () => {
 
   describe('Component Integration', () => {
     it('should initialize all required components', async () => {
-      const testServer = new HybridAgentFrameworkServer();
+      const testServer = new AgentFrameworkServer();
       
       // Mock the entire initialize method to avoid actual Redis connections
       const originalInitialize = (testServer as any).initialize;
@@ -189,7 +189,7 @@ describe('HybridAgentFrameworkServer Integration', () => {
 
   describe('Memory and Resource Management', () => {
     it('should properly cleanup resources on shutdown', async () => {
-      const testServer = new HybridAgentFrameworkServer();
+      const testServer = new AgentFrameworkServer();
       
       // Mock components
       const mockTTLManager = {
@@ -236,7 +236,7 @@ describe('HybridAgentFrameworkServer Integration', () => {
 
   describe('WebSocket Integration', () => {
     it('should setup WebSocket streaming on initialization', async () => {
-      const testServer = new HybridAgentFrameworkServer();
+      const testServer = new AgentFrameworkServer();
       
       const setupStreamingSpy = jest.spyOn(testServer as any, 'setupWebSocketStreaming')
         .mockImplementation(() => {});
@@ -256,8 +256,8 @@ describe('HybridAgentFrameworkServer Integration', () => {
     it('should support hybrid mode by default', () => {
       expect(process.env.USE_HYBRID).not.toBe('false');
       
-      const testServer = new HybridAgentFrameworkServer();
-      expect(testServer).toBeInstanceOf(HybridAgentFrameworkServer);
+      const testServer = new AgentFrameworkServer();
+      expect(testServer).toBeInstanceOf(AgentFrameworkServer);
     });
 
     it('should handle legacy mode configuration', () => {

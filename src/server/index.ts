@@ -1,45 +1,144 @@
 import express from 'express';
 import { createServer } from 'http';
-import cors from 'cors';
 import dotenv from 'dotenv';
+
+// Core components
 import { WebSocketServer } from '../websocket/WebSocketServer.js';
 import { StateManager } from '../state/StateManager.js';
 import { AgentRunner } from '../agents/AgentRunner.js';
 import { CrewRunner } from '../crews/CrewRunner.js';
-import { ConfigLoader } from '../config/loader.js';
 import { MCPClient } from '../tools/mcp/MCPClient.js';
-import { HybridAgentFrameworkServer } from './hybrid.js';
+
+// HTTP layer
+import { corsMiddleware } from '../http/middleware/cors.js';
+import { createRateLimiter } from '../http/middleware/rateLimit.js';
+import { errorHandler } from '../http/middleware/validation.js';
+import { RedisService } from '../http/services/RedisService.js';
+import { TTLManager } from '../http/services/TTLManager.js';
+
+// WebSocket layer
+import { PubSubManager } from '../websocket/PubSubManager.js';
+import { StreamingManager } from '../websocket/StreamingManager.js';
+
+// Routes
+import { createHealthRouter } from '../http/routes/health.js';
+import { createSystemRouter } from '../http/routes/system.js';
+import { createAgentsRouter } from '../http/routes/agents.js';
+import { createCrewsRouter } from '../http/routes/crews.js';
+import { createConfigRouter } from '../http/routes/config.js';
+import { createToolsRouter } from '../http/routes/tools.js';
+
+// Redis setup
+import { createRedisConnections } from './redis.js';
 
 // Load environment variables
 dotenv.config();
 
-// Use hybrid server by default
-const USE_HYBRID = process.env.USE_HYBRID !== 'false';
-
-/**
- * Main server class for the Agent Framework
- */
 export class AgentFrameworkServer {
   private app: express.Application;
   private server: any;
+  
+  // Core services
   private wsServer!: WebSocketServer;
   private stateManager!: StateManager;
   private agentRunner!: AgentRunner;
   private crewRunner!: CrewRunner;
   private mcpClient!: MCPClient;
+  
+  // HTTP services
+  private redisService!: RedisService;
+  private ttlManager!: TTLManager;
+  
+  // WebSocket services
+  private pubSubManager!: PubSubManager;
+  private streamingManager!: StreamingManager;
+  
+  // Redis connections
+  private redis: any;
 
   constructor() {
     this.app = express();
     this.server = createServer(this.app);
-    this.setupMiddleware();
-    this.setupRoutes();
   }
 
-  /**
-   * Setup Express middleware
-   */
+  async initialize(): Promise<void> {
+    // Initialize Redis connections
+    this.redis = createRedisConnections();
+    await this.redis.main.connect();
+    await this.redis.subscriber.connect();
+    await this.redis.publisher.connect();
+
+    // Initialize core services with existing Redis connections
+    this.stateManager = new StateManager(this.redis);
+    
+    this.agentRunner = new AgentRunner(this.stateManager);
+    this.crewRunner = new CrewRunner(this.stateManager, this.agentRunner);
+    this.mcpClient = new MCPClient();
+    
+    // Initialize WebSocket services
+    this.pubSubManager = new PubSubManager(this.redis.subscriber, this.redis.publisher);
+    this.streamingManager = new StreamingManager(this.pubSubManager);
+    
+    // Initialize HTTP services (with PubSub integration)
+    this.redisService = new RedisService(this.redis.main, this.pubSubManager);
+    this.ttlManager = new TTLManager(this.redis.main);
+    this.ttlManager.start();
+
+    // Configure external MCP servers
+    this.mcpClient.configureFromEnvironment().catch(error => {
+      console.warn('Failed to configure external MCP servers:', error);
+    });
+
+    // Initialize all agents from configuration files (after Redis is ready)
+    await this.agentRunner.initializeAllAgents();
+
+    // Initialize all crews from configuration files (after agents are ready)
+    await this.crewRunner.initializeAllCrews();
+
+    // Initialize WebSocket server with streaming manager
+    this.wsServer = new WebSocketServer(this.server, this.stateManager);
+    this.setupWebSocketStreaming();
+
+    // Setup Express middleware and routes
+    this.setupMiddleware();
+    this.setupRoutes();
+
+    console.log('Agent Framework server initialized');
+  }
+
+  private setupWebSocketStreaming(): void {
+    // Handle new WebSocket connections for streaming
+    this.wsServer.on('connection', (clientId: string, client: any) => {
+      this.streamingManager.addClient(clientId, client);
+    });
+
+    // Handle WebSocket disconnections
+    this.wsServer.on('disconnect', (clientId: string) => {
+      this.streamingManager.removeClient(clientId);
+    });
+
+    // Handle execution subscription requests
+    this.wsServer.on('message', async (clientId: string, message: any) => {
+      if (message.type === 'subscribe_execution') {
+        await this.streamingManager.subscribeToExecution(
+          clientId,
+          message.data.executionId,
+          message.data.type || 'agent'
+        );
+      }
+      
+      if (message.type === 'unsubscribe_execution') {
+        await this.streamingManager.unsubscribeFromExecution(
+          clientId,
+          message.data.executionId
+        );
+      }
+    });
+  }
+
   private setupMiddleware(): void {
-    this.app.use(cors());
+    // Basic middleware
+    this.app.use(corsMiddleware);
     this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true, limit: '10mb' }));
     
@@ -48,30 +147,46 @@ export class AgentFrameworkServer {
       console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
       next();
     });
+
+    // Rate limiting for API routes
+    const rateLimiter = createRateLimiter(this.redis.main, {
+      windowMs: 15 * 60 * 1000, // 15 minutes
+      max: 100 // limit each IP to 100 requests per windowMs
+    });
+    this.app.use('/api', rateLimiter.middleware());
   }
 
-  /**
-   * Setup API routes
-   */
   private setupRoutes(): void {
-    // Health check
-    this.app.get('/health', async (req, res) => {
-      try {
-        const health = await this.stateManager.healthCheck();
-        res.json({
-          status: 'healthy',
-          timestamp: new Date().toISOString(),
-          health
-        });
-      } catch (error) {
-        res.status(500).json({
-          status: 'unhealthy',
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
+    // Health check (no /api prefix)
+    this.app.use('/health', createHealthRouter(this.stateManager, this.redisService));
 
-    // System overview
+    // API routes
+    this.app.use('/api/system', createSystemRouter(
+      this.stateManager,
+      this.redisService,
+      this.ttlManager,
+      this.crewRunner
+    ));
+
+    this.app.use('/api/agents', createAgentsRouter(
+      this.agentRunner,
+      this.redisService
+    ));
+
+    this.app.use('/api/crews', createCrewsRouter(
+      this.crewRunner,
+      this.agentRunner,
+      this.redisService
+    ));
+
+    this.app.use('/api/config', createConfigRouter(
+      this.crewRunner,
+      this.redisService
+    ));
+
+    this.app.use('/api/tools', createToolsRouter(this.mcpClient));
+
+    // Backward compatibility - system overview
     this.app.get('/api/overview', async (req, res) => {
       try {
         const overview = await this.crewRunner.getSystemOverview();
@@ -83,515 +198,86 @@ export class AgentFrameworkServer {
       }
     });
 
-    // Agents endpoints
-    this.setupAgentRoutes();
-    
-    // Crews endpoints
-    this.setupCrewRoutes();
-    
-    // Configuration endpoints
-    this.setupConfigRoutes();
-    
-    // Tool endpoints
-    this.setupToolRoutes();
-  }
+    // Error handling middleware (must be last)
+    this.app.use(errorHandler);
 
-  /**
-   * Setup agent-related routes
-   */
-  private setupAgentRoutes(): void {
-    // List all agents
-    this.app.get('/api/agents', async (req, res) => {
-      try {
-        const agents = await this.agentRunner.getAllAgentStates();
-        res.json(agents);
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Get specific agent
-    this.app.get('/api/agents/:agentId', async (req, res) => {
-      try {
-        const agent = await this.agentRunner.getAgentState(req.params.agentId);
-        if (!agent) {
-          return res.status(404).json({ error: 'Agent not found' });
-        }
-        res.json(agent);
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Create new agent
-    this.app.post('/api/agents', async (req, res) => {
-      try {
-        const { configPath } = req.body;
-        if (!configPath) {
-          return res.status(400).json({ error: 'configPath is required' });
-        }
-
-        const agent = await this.agentRunner.createAgentFromConfig(configPath);
-        res.json({
-          message: 'Agent created successfully',
-          agentId: agent.getDefinition().id
-        });
-      } catch (error) {
-        res.status(400).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Execute agent (new stateless API)
-    this.app.post('/api/agents/execute', async (req, res) => {
-      try {
-        const requestData = req.body;
-        
-        const metadata = {
-          configPath: requestData.configPath,
-          task: requestData.task,
-          input: requestData.input
-        };
-
-        const executionId = await this.stateManager.createExecution(
-          'agent',
-          metadata,
-          requestData.options?.ttl || 3600
-        );
-
-        // Execute asynchronously
-        this.executeAgentAsync(executionId, requestData);
-
-        res.json({
-          executionId,
-          status: 'started'
-        });
-      } catch (error) {
-        res.status(400).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Get execution status
-    this.app.get('/api/agents/status/:executionId', async (req, res) => {
-      try {
-        const status = await this.stateManager.getExecutionStatus(req.params.executionId);
-        if (!status) {
-          return res.status(404).json({ error: 'Execution not found' });
-        }
-        res.json(status);
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Get execution results
-    this.app.get('/api/agents/results/:executionId', async (req, res) => {
-      try {
-        const result = await this.stateManager.getExecutionResult(req.params.executionId);
-        if (!result) {
-          return res.status(404).json({ error: 'Result not found or execution not completed' });
-        }
-        res.json(result);
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // List active executions
-    this.app.get('/api/agents/active', async (req, res) => {
-      try {
-        const activeExecutions = await this.stateManager.getActiveExecutions();
-        const agentExecutions = activeExecutions.filter((id: string) => id.startsWith('agent_'));
-        res.json({
-          executions: agentExecutions
-        });
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Execute task with agent
-    this.app.post('/api/agents/:agentId/execute', async (req, res) => {
-      try {
-        const { task, context } = req.body;
-        if (!task) {
-          return res.status(400).json({ error: 'task is required' });
-        }
-
-        const result = await this.agentRunner.executeTask(
-          req.params.agentId,
-          task,
-          context || {}
-        );
-
-        res.json({ result });
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Reset agent
-    this.app.post('/api/agents/:agentId/reset', async (req, res) => {
-      try {
-        await this.agentRunner.resetAgent(req.params.agentId);
-        res.json({ message: 'Agent reset successfully' });
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
+    // 404 handler
+    this.app.use('*', (req, res) => {
+      res.status(404).json({
+        error: 'Not found',
+        code: 'NOT_FOUND',
+        path: req.originalUrl,
+        timestamp: new Date()
+      });
     });
   }
 
-  /**
-   * Setup crew-related routes
-   */
-  private setupCrewRoutes(): void {
-    // List all crews
-    this.app.get('/api/crews', async (req, res) => {
-      try {
-        const crews = await this.crewRunner.getAllCrewStates();
-        res.json(crews);
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Get specific crew
-    this.app.get('/api/crews/:crewId', async (req, res) => {
-      try {
-        const crew = await this.crewRunner.getCrewState(req.params.crewId);
-        if (!crew) {
-          return res.status(404).json({ error: 'Crew not found' });
-        }
-        res.json(crew);
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Create new crew
-    this.app.post('/api/crews', async (req, res) => {
-      try {
-        const { configPath } = req.body;
-        if (!configPath) {
-          return res.status(400).json({ error: 'configPath is required' });
-        }
-
-        const crew = await this.crewRunner.createCrewFromConfig(configPath);
-        res.json({
-          message: 'Crew created successfully',
-          crewId: crew.getDefinition().id
-        });
-      } catch (error) {
-        res.status(400).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Execute crew
-    this.app.post('/api/crews/:crewId/execute', async (req, res) => {
-      try {
-        const { input, context } = req.body;
-        if (!input) {
-          return res.status(400).json({ error: 'input is required' });
-        }
-
-        const result = await this.crewRunner.executeCrewWithContext(
-          req.params.crewId,
-          input,
-          context || {}
-        );
-
-        res.json({ result });
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Get crew execution logs
-    this.app.get('/api/crews/:crewId/logs', async (req, res) => {
-      try {
-        const limit = parseInt(req.query.limit as string) || 50;
-        const logs = await this.crewRunner.getCrewLogs(req.params.crewId, limit);
-        res.json(logs);
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Reset crew
-    this.app.post('/api/crews/:crewId/reset', async (req, res) => {
-      try {
-        await this.crewRunner.resetCrew(req.params.crewId);
-        res.json({ message: 'Crew reset successfully' });
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Cancel crew execution
-    this.app.post('/api/crews/:crewId/cancel', async (req, res) => {
-      try {
-        const crew = this.crewRunner.getCrew(req.params.crewId);
-        if (!crew) {
-          return res.status(404).json({ error: 'Crew not found' });
-        }
-
-        await crew.cancel();
-        res.json({ message: 'Crew execution cancelled' });
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-  }
-
-  /**
-   * Setup configuration routes
-   */
-  private setupConfigRoutes(): void {
-    // List available agent configurations
-    this.app.get('/api/config/agents', async (req, res) => {
-      try {
-        const agents = ConfigLoader.loadAllAgents();
-        res.json(agents.map(agent => ({
-          id: agent.id,
-          name: agent.name,
-          role: agent.role
-        })));
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // List available crew configurations
-    this.app.get('/api/config/crews', async (req, res) => {
-      try {
-        const crews = ConfigLoader.loadAllCrews();
-        res.json(crews.map(crew => ({
-          id: crew.id,
-          name: crew.name,
-          process: crew.process
-        })));
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // Validate configuration
-    this.app.post('/api/config/validate', async (req, res) => {
-      try {
-        const { type, configPath } = req.body;
-        if (!type || !configPath) {
-          return res.status(400).json({ error: 'type and configPath are required' });
-        }
-
-        if (type === 'agent') {
-          const agent = ConfigLoader.loadAgentConfig(configPath);
-          res.json({ valid: true, agent });
-        } else if (type === 'crew') {
-          const crew = ConfigLoader.loadCrewConfig(configPath);
-          const validation = await this.crewRunner.validateCrew(crew);
-          res.json({ valid: validation.valid, crew, errors: validation.errors });
-        } else {
-          res.status(400).json({ error: 'Invalid type. Must be "agent" or "crew"' });
-        }
-      } catch (error) {
-        res.status(400).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-  }
-
-  /**
-   * Setup tool-related routes
-   */
-  private setupToolRoutes(): void {
-    // List available tools
-    this.app.get('/api/tools', async (req, res) => {
-      try {
-        const nativeTools = ['web_scraper', 'redis'];
-        const mcpTools = this.mcpClient.getAllTools();
-        
-        res.json({ 
-          native: nativeTools,
-          mcp: mcpTools,
-          total: nativeTools.length + mcpTools.length
-        });
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-
-    // MCP client status
-    this.app.get('/api/mcp/status', async (req, res) => {
-      try {
-        const connections = this.mcpClient.getConnectionsInfo();
-        const healthResults = await this.mcpClient.healthCheck();
-        
-        res.json({
-          status: 'running',
-          connections: connections.length,
-          connectedServers: this.mcpClient.getConnectedServers(),
-          health: healthResults
-        });
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    });
-  }
-
-  /**
-   * Initialize the server
-   */
-  async initialize(): Promise<void> {
-    // Initialize core services
-    this.stateManager = new StateManager();
-    this.agentRunner = new AgentRunner(this.stateManager);
-    this.crewRunner = new CrewRunner(this.stateManager, this.agentRunner);
-    this.mcpClient = new MCPClient();
-    
-    // Configure external MCP servers from environment
-    this.mcpClient.configureFromEnvironment().catch(error => {
-      console.warn('Failed to configure external MCP servers:', error);
-    });
-
-    // Initialize WebSocket server
-    this.wsServer = new WebSocketServer(this.server, this.stateManager);
-
-    // Initialize all agents from configuration files
-    await this.agentRunner.initializeAllAgents();
-
-    // Initialize all crews from configuration files
-    await this.crewRunner.initializeAllCrews();
-
-    // MCP Client is initialized and ready for external connections
-
-    console.log('Agent Framework server initialized');
-  }
-
-  /**
-   * Start the server
-   */
   async start(port: number = 3000): Promise<void> {
     await this.initialize();
 
     this.server.listen(port, () => {
-      console.log(`Agent Framework server running on port ${port}`);
-      console.log(`WebSocket server available at ws://localhost:${port}/ws`);
-      console.log(`Health check: http://localhost:${port}/health`);
+      console.log(`🚀 Agent Framework server running on port ${port}`);
+      console.log(`📡 WebSocket server available at ws://localhost:${port}/ws`);
+      console.log(`🔍 Health check: http://localhost:${port}/health`);
+      console.log(`📊 System stats: http://localhost:${port}/api/system/stats`);
+      console.log(`🤖 Agents API: http://localhost:${port}/api/agents`);
+      console.log(`👥 Crews API: http://localhost:${port}/api/crews`);
+      console.log('');
+      console.log('🎯 New Stateless APIs:');
+      console.log(`   POST /api/agents/execute - Execute agent directly`);
+      console.log(`   GET  /api/agents/status/:id - Get execution status`);
+      console.log(`   GET  /api/agents/results/:id - Get execution results`);
+      console.log(`   POST /api/crews/execute - Execute crew directly`);
+      console.log(`   GET  /api/crews/status/:id - Get execution status`);
+      console.log(`   GET  /api/crews/results/:id - Get execution results`);
     });
   }
 
-  /**
-   * Execute agent task asynchronously
-   */
-  private async executeAgentAsync(executionId: string, request: any): Promise<void> {
-    const startTime = Date.now();
-    
-    try {
-      await this.stateManager.updateExecutionStatus(
-        executionId,
-        'running',
-        0,
-        'initializing'
-      );
-
-      // Create agent from config
-      const agent = await this.agentRunner.createAgentFromConfig(request.configPath);
-      const agentId = agent.getDefinition().id;
-
-      await this.stateManager.updateExecutionStatus(
-        executionId,
-        'running',
-        0.2,
-        'agent_created'
-      );
-
-      // Execute the task
-      const result = await this.agentRunner.executeTask(
-        agentId,
-        request.task || request.input || '',
-        request.context || {}
-      );
-
-      const executionTime = Date.now() - startTime;
-
-      await this.stateManager.updateExecutionStatus(
-        executionId,
-        'completed',
-        1.0,
-        'completed',
-        result
-      );
-
-      await this.stateManager.incrementCompletedCount();
-
-    } catch (error) {
-      console.error(`Agent execution failed for ${executionId}:`, error);
-      
-      await this.stateManager.updateExecutionStatus(
-        executionId,
-        'failed',
-        undefined,
-        'failed',
-        undefined,
-        error instanceof Error ? error.message : String(error)
-      );
-    }
-  }
-
-  /**
-   * Graceful shutdown
-   */
   async shutdown(): Promise<void> {
     console.log('Shutting down server...');
     
-    await this.mcpClient.disconnectAll();
-    await this.crewRunner.shutdown();
-    await this.agentRunner.shutdown();
-    await this.wsServer.close();
-    await this.stateManager.close();
+    // Stop TTL manager
+    if (this.ttlManager) {
+      this.ttlManager.stop();
+    }
     
-    this.server.close(() => {
-      console.log('Server shutdown complete');
+    // Cleanup WebSocket services
+    if (this.streamingManager) {
+      await this.streamingManager.cleanup();
+    }
+    if (this.pubSubManager) {
+      await this.pubSubManager.close();
+    }
+    
+    // Shutdown core services
+    if (this.mcpClient) {
+      await this.mcpClient.disconnectAll();
+    }
+    if (this.crewRunner) {
+      await this.crewRunner.shutdown();
+    }
+    if (this.agentRunner) {
+      await this.agentRunner.shutdown();
+    }
+    if (this.wsServer) {
+      await this.wsServer.close();
+    }
+    if (this.stateManager) {
+      await this.stateManager.close();
+    }
+    
+    // Close Redis connections
+    if (this.redis) {
+      if (this.redis.main) await this.redis.main.disconnect();
+      if (this.redis.subscriber) await this.redis.subscriber.disconnect();
+      if (this.redis.publisher) await this.redis.publisher.disconnect();
+    }
+    
+    return new Promise<void>((resolve) => {
+      this.server.close(() => {
+        console.log('Server shutdown complete');
+        resolve();
+      });
     });
   }
 }
@@ -599,46 +285,25 @@ export class AgentFrameworkServer {
 // Start server if this file is run directly
 if (typeof process !== 'undefined' && process.argv && process.argv[1]) {
   try {
-    // Handle import.meta.url safely for Jest compatibility
-    const currentFile = typeof import.meta !== 'undefined' && import.meta.url 
-      ? new URL(import.meta.url).pathname 
-      : process.argv[1];
+    // Use process.argv[1] directly for compatibility with tests
     const scriptFile = process.argv[1];
     
-    if (currentFile.endsWith(scriptFile) || scriptFile.endsWith('index.js')) {
+    if (scriptFile.endsWith('hybrid.js') || scriptFile.includes('hybrid.ts')) {
+      const server = new AgentFrameworkServer();
       const port = parseInt(process.env.PORT || '3000');
       
-      if (USE_HYBRID) {
-        console.log('🔄 Starting Hybrid Agent Framework Server...');
-        const server = new HybridAgentFrameworkServer();
-        server.start(port).catch(console.error);
-        
-        // Graceful shutdown
-        process.on('SIGTERM', async () => {
-          await server.shutdown();
-          process.exit(0);
-        });
-        
-        process.on('SIGINT', async () => {
-          await server.shutdown();
-          process.exit(0);
-        });
-      } else {
-        console.log('🔄 Starting Legacy Agent Framework Server...');
-        const server = new AgentFrameworkServer();
-        server.start(port).catch(console.error);
-        
-        // Graceful shutdown
-        process.on('SIGTERM', async () => {
-          await server.shutdown();
-          process.exit(0);
-        });
-        
-        process.on('SIGINT', async () => {
-          await server.shutdown();
-          process.exit(0);
-        });
-      }
+      server.start(port).catch(console.error);
+      
+      // Graceful shutdown
+      process.on('SIGTERM', async () => {
+        await server.shutdown();
+        process.exit(0);
+      });
+      
+      process.on('SIGINT', async () => {
+        await server.shutdown();
+        process.exit(0);
+      });
     }
   } catch (error) {
     // Silently ignore import.meta errors in test environment
