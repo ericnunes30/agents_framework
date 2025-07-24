@@ -1,0 +1,75 @@
+id: hierarchical-team
+name: Content Creation Hierarchy
+description: |
+  A hierarchical content creation team with a manager coordinating specialized agents.
+  The manager agent oversees and directs the work of content creators and researchers.
+
+process: hierarchical
+
+agents:
+  - basic-researcher
+  - writing-agent
+  - web-scraper-agent
+
+tasks:
+  - id: research_planning
+    description: >
+      Plan the content research strategy and coordinate with specialized agents.
+      Define research scope, assign specific areas to researchers, and set quality standards.
+    agent: basic-researcher
+    expected_output: >
+      Detailed research plan including:
+      - Research objectives and scope
+      - Task assignments for specialized agents
+      - Quality criteria and evaluation metrics
+      - Timeline and deliverable expectations
+    
+  - id: gather_web_data
+    description: >
+      Execute web scraping based on the research plan to gather raw data and sources.
+      Focus on authoritative sources and comprehensive data collection.
+    agent: web-scraper-agent
+    context:
+      - research_planning
+    expected_output: >
+      Comprehensive data collection including:
+      - Scraped content from target sources
+      - Structured data with metadata
+      - Source validation and credibility scores
+      - Raw materials for content creation
+    
+  - id: content_creation
+    description: >
+      Create high-quality content based on research findings and manager guidance.
+      Follow the established guidelines and quality standards.
+    agent: writing-agent
+    context:
+      - research_planning
+      - gather_web_data
+    expected_output: >
+      Professional content deliverable:
+      - Well-structured article or document
+      - Proper citations and references
+      - Adherence to style guidelines
+      - Ready for publication format
+    
+  - id: quality_review
+    description: >
+      Review all deliverables for quality, accuracy, and compliance with objectives.
+      Provide feedback and coordinate revisions if needed.
+    agent: basic-researcher
+    context:
+      - research_planning
+      - gather_web_data
+      - content_creation
+    expected_output: >
+      Quality assessment report:
+      - Content quality evaluation
+      - Fact-checking results
+      - Compliance with original objectives
+      - Recommendations for improvements
+
+shared_context: {}
+
+verbose: true
+max_iterations: 8

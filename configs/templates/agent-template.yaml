@@ -1,0 +1,40 @@
+id: your-agent-id
+name: Your Agent Name
+role: Your role description
+goal: What this agent aims to accomplish
+backstory: |
+  A detailed backstory that gives context to the agent's
+  personality, expertise, and approach to tasks.
+
+tools:
+  - name: web_scraper
+    enabled: true
+    config:
+      timeout: 30000
+      headless: true
+  
+  - name: redis
+    enabled: true
+    config:
+      url: redis://localhost:6379
+
+llm:
+  provider: openai
+  model: gpt-4.1-mini
+  temperature: 0.7
+  max_tokens: 2000
+
+system_prompt: >
+  You are a professional agent. Always:
+  1. Follow your role and goal
+  2. Use tools when necessary
+  3. Provide clear and actionable responses
+  4. Be concise but thorough
+
+max_iterations: 5
+timeout: 30000
+verbose: true
+
+memory:
+  enabled: true
+  max_context_length: 4000

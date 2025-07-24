@@ -1,0 +1,38 @@
+id: your-crew-id
+name: Your Crew Name
+description: |
+  A comprehensive description of what this crew does
+  and how the agents work together.
+
+agents:
+  - researcher
+  - analyst
+  - writer
+
+process: sequential
+
+tasks:
+  - id: research
+    description: Research the given topic thoroughly
+    agent: researcher
+    expected_output: Detailed research findings
+    output_key: research_data
+    
+  - id: analyze
+    description: Analyze the research findings
+    agent: analyst
+    expected_output: Analysis report
+    context: [research]
+    output_key: analysis_report
+    
+  - id: write
+    description: Write final report based on analysis
+    agent: writer
+    expected_output: Final comprehensive report
+    context: [research, analyze]
+    output_key: final_report
+
+shared_context: {}
+
+max_iterations: 10
+verbose: true

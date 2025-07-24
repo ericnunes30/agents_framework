@@ -1,0 +1,78 @@
+id: collaborative-team
+name: Collaborative Analysis Team
+description: |
+  A collaborative team where all agents work together on shared objectives,
+  contributing their specialized skills simultaneously and iteratively.
+
+process: collaborative
+
+agents:
+  - basic-researcher
+  - web-scraper-agent
+  - writing-agent
+
+tasks:
+  - id: collaborative_research
+    description: >
+      All agents collaborate to research a complex topic from multiple angles.
+      Each agent contributes their expertise while sharing findings in real-time.
+    agent: basic-researcher
+    expected_output: >
+      Collaborative research foundation:
+      - Initial research framework
+      - Key questions and hypotheses
+      - Research methodology outline
+      - Collaboration guidelines for team
+    
+  - id: data_gathering_collaboration
+    description: >
+      Work collaboratively to gather and validate data from various sources.
+      Share findings immediately with other agents for cross-validation.
+    agent: web-scraper-agent
+    context:
+      - collaborative_research
+    expected_output: >
+      Validated data collection:
+      - Multi-source data compilation
+      - Cross-referenced information
+      - Real-time data validation
+      - Collaborative source assessment
+    
+  - id: content_synthesis
+    description: >
+      Synthesize all collaborative inputs into coherent content while
+      maintaining ongoing communication with research and data teams.
+    agent: writing-agent
+    context:
+      - collaborative_research
+      - data_gathering_collaboration
+    expected_output: >
+      Collaborative content synthesis:
+      - Integrated analysis from all perspectives
+      - Multi-agent validated content
+      - Consensus-based conclusions
+      - Collaborative revision notes
+    
+  - id: iterative_refinement
+    description: >
+      All agents participate in iterative refinement of the final output,
+      contributing corrections, improvements, and additional insights.
+    agent: basic-researcher
+    context:
+      - collaborative_research
+      - data_gathering_collaboration
+      - content_synthesis
+    expected_output: >
+      Final collaborative deliverable:
+      - Multi-agent reviewed content
+      - Consensus-based recommendations
+      - Integrated team insights
+      - Quality-assured final product
+
+shared_context:
+  collaboration_mode: "real_time"
+  consensus_threshold: 0.75
+  iteration_frequency: "continuous"
+
+verbose: true
+max_iterations: 12

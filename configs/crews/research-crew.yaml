@@ -1,0 +1,65 @@
+id: research-team
+name: Research Team
+description: |
+  A collaborative research team that scrapes data, analyzes it, and creates
+  comprehensive reports. Uses sequential process for structured workflow.
+
+process: sequential
+
+agents:
+  - basic-agent
+  - web-scraper-agent
+  - writing-agent
+
+tasks:
+  - id: scrape_topic_data
+    description: >
+      Scrape comprehensive data about the given research topic from multiple sources.
+      Focus on recent, authoritative sources and gather structured data including
+      key statistics, trends, and expert opinions.
+    agent: web-scraper-agent
+    expected_output: >
+      Structured JSON data containing:
+      - Key statistics and metrics
+      - Recent trends and developments
+      - Expert opinions and quotes
+      - Source URLs and credibility indicators
+      - Timestamps for data freshness
+    
+  - id: analyze_scraped_data
+    description: >
+      Analyze the scraped data to identify patterns, insights, and key findings.
+      Provide critical evaluation of sources, highlight contradictions, and
+      synthesize information into actionable insights.
+    agent: basic-agent
+    context:
+      - scrape_topic_data
+    expected_output: >
+      Comprehensive analysis including:
+      - Data validation and source credibility assessment
+      - Key insights and patterns identified
+      - Contradictions or gaps in information
+      - Actionable recommendations
+      - Risk assessment of sources
+    
+  - id: create_research_report
+    description: >
+      Create a well-structured, comprehensive research report based on the analysis.
+      The report should be professional, well-cited, and suitable for business or academic use.
+    agent: writing-agent
+    context:
+      - scrape_topic_data
+      - analyze_scraped_data
+    expected_output: >
+      Professional research report with:
+      - Executive summary
+      - Methodology section
+      - Key findings and insights
+      - Detailed analysis with citations
+      - Recommendations and next steps
+      - References and sources
+
+shared_context: {}
+
+verbose: true
+max_iterations: 10

@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # Redis para desenvolvimento
+  redis-dev:
+    image: redis:7-alpine
+    container_name: agent-framework-redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    command: redis-server --appendonly yes
+
+  # Servidor de desenvolvimento (opcional, para teste isolado)
+  agent-framework-dev:
+    build: .
+    container_name: agent-framework-dev
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - REDIS_URL=redis://redis-dev:6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - PORT=3000
+    depends_on:
+      redis-dev:
+        condition: service_healthy
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./examples:/app/examples:ro
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    profiles:
+      - full-stack
+
+volumes:
+  redis_dev_data:
+    driver: local
