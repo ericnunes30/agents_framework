@@ -94,6 +94,9 @@ export class AgentFrameworkServer {
 
     // Initialize all crews from configuration files (after agents are ready)
     await this.crewRunner.initializeAllCrews();
+    
+    // Connect crew events to WebSocket streaming
+    this.setupCrewEventStreaming();
 
     // Initialize WebSocket server with streaming manager
     this.wsServer = new WebSocketServer(this.server, this.stateManager);
@@ -104,6 +107,98 @@ export class AgentFrameworkServer {
     this.setupRoutes();
 
     console.log('Agent Framework server initialized');
+  }
+
+  private setupCrewEventStreaming(): void {
+    // Listen to crew execution events and broadcast them via WebSocket
+    this.crewRunner.on('crew_started', (data: any) => {
+      this.streamingManager.broadcast({
+        type: 'crew.started',
+        timestamp: new Date(),
+        data: {
+          crewId: data.crewId,
+          input: data.input,
+          status: 'started'
+        }
+      });
+    });
+
+    this.crewRunner.on('crew_progress', (data: any) => {
+      this.streamingManager.broadcast({
+        type: 'crew.progress',
+        timestamp: new Date(),
+        data: {
+          crewId: data.crewId,
+          currentTask: data.currentTask,
+          progress: data.progress,
+          status: 'running'
+        }
+      });
+    });
+
+    this.crewRunner.on('crew_completed', (data: any) => {
+      this.streamingManager.broadcast({
+        type: 'crew.completed',
+        timestamp: new Date(),
+        data: {
+          crewId: data.crewId,
+          result: data.result,
+          status: 'completed'
+        }
+      });
+    });
+
+    this.crewRunner.on('crew_failed', (data: any) => {
+      this.streamingManager.broadcast({
+        type: 'crew.failed',
+        timestamp: new Date(),
+        data: {
+          crewId: data.crewId,
+          error: data.error,
+          status: 'failed'
+        }
+      });
+    });
+
+    // Also listen to agent events for more granular updates
+    this.agentRunner.on('agent_started', (data: any) => {
+      this.streamingManager.broadcast({
+        type: 'agent.started',
+        timestamp: new Date(),
+        data: {
+          agentId: data.agentId,
+          task: data.task,
+          status: 'started'
+        }
+      });
+    });
+
+    this.agentRunner.on('agent_completed', (data: any) => {
+      this.streamingManager.broadcast({
+        type: 'agent.completed',
+        timestamp: new Date(),
+        data: {
+          agentId: data.agentId,
+          result: data.result,
+          status: 'completed'
+        }
+      });
+    });
+
+    // Listen to agent streaming events for real-time content
+    this.agentRunner.on('agent_stream', (data: any) => {
+      this.streamingManager.broadcast({
+        type: 'agent.stream',
+        timestamp: new Date(),
+        data: {
+          agentId: data.agentId,
+          taskId: data.taskId,
+          content: data.content,
+          accumulated: data.accumulated,
+          timestamp: data.timestamp
+        }
+      });
+    });
   }
 
   private setupWebSocketStreaming(): void {
@@ -144,7 +239,7 @@ export class AgentFrameworkServer {
     
     // Request logging
     this.app.use((req, res, next) => {
-      console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+      console.log(`${new Date()} - ${req.method} ${req.path}`);
       next();
     });
 
@@ -288,7 +383,7 @@ if (typeof process !== 'undefined' && process.argv && process.argv[1]) {
     // Use process.argv[1] directly for compatibility with tests
     const scriptFile = process.argv[1];
     
-    if (scriptFile.endsWith('hybrid.js') || scriptFile.includes('hybrid.ts')) {
+    if (scriptFile.endsWith('index.js') || scriptFile.includes('index.ts') || scriptFile.includes('server')) {
       const server = new AgentFrameworkServer();
       const port = parseInt(process.env.PORT || '3000');
       

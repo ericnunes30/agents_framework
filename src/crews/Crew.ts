@@ -29,7 +29,7 @@ export interface ProcessOrchestrator {
  * Crew orchestrator for multi-agent systems
  */
 export class Crew extends EventEmitter {
-  private definition: CrewDefinition;
+  public definition: CrewDefinition;
   private agents: Map<string, Agent>;
   private stateManager: StateManager;
   private state: CrewState;

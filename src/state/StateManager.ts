@@ -1,5 +1,9 @@
+import dotenv from 'dotenv';
 import Redis from 'ioredis';
 import { EventEmitter } from 'events';
+
+// Load environment variables
+dotenv.config();
 import { 
   AgentState, 
   CrewState, 

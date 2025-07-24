@@ -1,5 +1,9 @@
+import dotenv from 'dotenv';
 import { BaseClient } from './BaseClient.js';
 import { ChatMessage, ChatResponse, StreamResponse, LLMRequestConfig } from './types.js';
+
+// Load environment variables
+dotenv.config();
 
 /**
  * OpenRouter HTTP API client implementation
@@ -55,7 +59,7 @@ export class OpenRouterClient extends BaseClient {
       frequency_penalty: config.frequencyPenalty,
       presence_penalty: config.presencePenalty,
       stop: config.stop,
-      stream: true
+      stream: config.stream ?? true
     };
 
     const response = await fetch(`${this.baseURL}/chat/completions`, {

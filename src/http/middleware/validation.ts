@@ -43,6 +43,12 @@ export const executionRequestSchema = z.object({
   }).optional()
 });
 
+export const agentExecutionSchema = z.object({
+  task: z.string().min(1, 'Task is required'),
+  context: z.record(z.any()).optional(),
+  stream: z.boolean().optional().default(false) // HTTP streaming parameter
+});
+
 export const configValidationSchema = z.object({
   type: z.enum(['agent', 'crew']),
   configPath: z.string().min(1, 'Config path is required')

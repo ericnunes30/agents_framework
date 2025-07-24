@@ -17,7 +17,15 @@ export type WebSocketMessageType =
   | 'system_update'
   | 'error'
   | 'ping'
-  | 'pong';
+  | 'pong'
+  | 'crew.started'
+  | 'crew.progress'
+  | 'crew.completed'
+  | 'crew.failed'
+  | 'agent.started'
+  | 'agent.completed'
+  | 'agent.failed'
+  | 'agent.stream';
 
 /**
  * WebSocket message structure

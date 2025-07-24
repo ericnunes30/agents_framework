@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import { LLMClient } from '../llm/types.js';
 import { StateManager } from '../state/StateManager.js';
 import { AgentState, TaskResult } from '../state/types.js';
@@ -7,7 +8,7 @@ import { NativeToolManager } from '../tools/native/NativeToolManager.js';
 /**
  * Base agent class for executing tasks with LLM integration
  */
-export class Agent {
+export class Agent extends EventEmitter {
   private definition: AgentDefinition;
   private llmClient: LLMClient;
   private stateManager: StateManager;
@@ -21,6 +22,7 @@ export class Agent {
     stateManager: StateManager,
     nativeToolManager?: NativeToolManager
   ) {
+    super();
     this.definition = definition;
     this.llmClient = llmClient;
     this.stateManager = stateManager;
@@ -70,12 +72,54 @@ export class Agent {
     await this.stateManager.saveAgentState(this.id, this.state);
 
     try {
-      const response = await this.llmClient.chat([
-        { role: 'system' as const, content: this.buildSystemPrompt() },
-        { role: 'user' as const, content: this.buildTaskPrompt(task, context) }
-      ], this.definition.llm);
+      let response: any;
+      let result: string;
 
-      const result = response.choices[0]?.message?.content || '';
+      if (this.definition.llm.stream) {
+        // Use streaming for real-time output
+        let accumulatedContent = '';
+        const streamConfig = {
+          ...this.definition.llm,
+          stream: true
+        };
+
+        const streamIterable = this.llmClient.stream([
+          { role: 'system' as const, content: this.buildSystemPrompt() },
+          { role: 'user' as const, content: this.buildTaskPrompt(task, context) }
+        ], streamConfig);
+
+        for await (const chunk of streamIterable) {
+          if (chunk.choices?.[0]?.delta?.content) {
+            const content = chunk.choices[0].delta.content;
+            accumulatedContent += content;
+            
+            // Emit streaming event with partial content
+            this.emit('stream_chunk', {
+              agentId: this.id,
+              taskId: this.state.currentTask,
+              content: content,
+              accumulated: accumulatedContent,
+              timestamp: new Date()
+            });
+          }
+        }
+
+        result = accumulatedContent;
+        response = { 
+          choices: [{ message: { content: result } }],
+          usage: null // Will be populated if available
+        };
+
+      } else {
+        // Regular non-streaming execution
+        response = await this.llmClient.chat([
+          { role: 'system' as const, content: this.buildSystemPrompt() },
+          { role: 'user' as const, content: this.buildTaskPrompt(task, context) }
+        ], this.definition.llm);
+
+        result = response.choices[0]?.message?.content || '';
+      }
+
       await this.updateTaskState('success', result, response, startTime, context);
       return result;
 

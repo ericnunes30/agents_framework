@@ -8,6 +8,7 @@ export const LLMConfigSchema = z.object({
   model: z.string().min(1, 'Model name is required'),
   temperature: z.number().min(0).max(2).default(0.7),
   maxTokens: z.number().positive().optional(),
+  stream: z.boolean().optional().default(false), // Enable streaming for real-time responses
   apiKey: z.string().optional(), // Can use env var instead
   baseURL: z.string().url().optional() // For custom endpoints
 });

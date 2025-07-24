@@ -1,4 +1,8 @@
+import dotenv from 'dotenv';
 import Redis from 'ioredis';
+
+// Load environment variables
+dotenv.config();
 
 export interface RedisConfig {
   url: string;

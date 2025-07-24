@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import { Agent } from './Agent.js';
 import { AgentDefinition } from '../config/schemas.js';
 import { LLMClient } from '../llm/types.js';
@@ -10,13 +11,14 @@ import { NativeToolManager } from '../tools/native/NativeToolManager.js';
 /**
  * Agent runner for creating and managing agent instances
  */
-export class AgentRunner {
+export class AgentRunner extends EventEmitter {
   private stateManager: StateManager;
   private nativeToolManager: NativeToolManager;
   private agents: Map<string, Agent> = new Map();
   private llmClients: Map<string, LLMClient> = new Map();
 
   constructor(stateManager: StateManager, nativeToolManager?: NativeToolManager) {
+    super();
     this.stateManager = stateManager;
     this.nativeToolManager = nativeToolManager || new NativeToolManager();
   }
@@ -60,6 +62,9 @@ export class AgentRunner {
     const agent = new Agent(agentDefinition, llmClient, this.stateManager, this.nativeToolManager);
     this.agents.set(agentDefinition.id, agent);
 
+    // Connect agent streaming events
+    this.setupAgentEventForwarding(agent);
+
     // Save initial state
     await this.stateManager.saveAgentState(agentDefinition.id, agent.getState());
 
@@ -79,6 +84,21 @@ export class AgentRunner {
    */
   getAgent(agentId: string): Agent | undefined {
     return this.agents.get(agentId);
+  }
+
+  /**
+   * Setup event forwarding from agent to runner
+   */
+  private setupAgentEventForwarding(agent: any): void {
+    agent.on('stream_chunk', (data: any) => {
+      this.emit('agent_stream', {
+        agentId: data.agentId,
+        taskId: data.taskId,
+        content: data.content,
+        accumulated: data.accumulated,
+        timestamp: data.timestamp
+      });
+    });
   }
 
   /**
@@ -118,7 +138,21 @@ export class AgentRunner {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
-    return agent.executeTask(task, context);
+    // Emit agent started event
+    this.emit('agent_started', { agentId, task });
+
+    try {
+      const result = await agent.executeTask(task, context);
+      
+      // Emit agent completed event
+      this.emit('agent_completed', { agentId, result });
+      
+      return result;
+    } catch (error) {
+      // Emit agent failed event
+      this.emit('agent_failed', { agentId, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
   }
 
   /**

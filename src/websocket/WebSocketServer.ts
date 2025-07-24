@@ -40,8 +40,8 @@ export class WebSocketServer extends EventEmitter {
       port: 3001,
       host: 'localhost',
       path: '/ws',
-      heartbeatInterval: 30000,
-      heartbeatTimeout: 5000,
+      heartbeatInterval: 30000, // 30 segundos entre pings
+      heartbeatTimeout: 3600000, // 1 hora - timeout muito generoso para tarefas longas como 30+ minutos
       maxPayload: 1024 * 1024, // 1MB
       compression: true,
       ...config
@@ -437,28 +437,77 @@ export class WebSocketServer extends EventEmitter {
   }
 
   /**
-   * Start heartbeat mechanism
+   * Start heartbeat mechanism com timeout condicional baseado em execuções ativas
    */
   private startHeartbeat(): void {
-    this.heartbeatInterval = setInterval(() => {
-      this.clients.forEach((client, clientId) => {
-        if (client.socket.readyState === WebSocket.OPEN) {
+    this.heartbeatInterval = setInterval(async () => {
+      for (const [clientId, client] of this.clients.entries()) {
+        if (client.socket.readyState !== WebSocket.OPEN) {
+          this.clients.delete(clientId);
+          continue;
+        }
+
+        try {
+          // Verificar se há execuções ativas para este cliente
+          const hasActiveExecutions = await this.checkActiveExecutions(clientId);
+          
           const now = new Date();
           const lastPing = new Date(client.lastPing);
           const timeSinceLastPing = now.getTime() - lastPing.getTime();
 
-          if (timeSinceLastPing > this.config.heartbeatTimeout!) {
-            console.log(`Closing inactive connection: ${clientId}`);
-            client.socket.terminate();
-            this.clients.delete(clientId);
+          // Timeout condicional: maior se houver execuções ativas
+          const timeout = hasActiveExecutions ? 3600000 : 300000; // 1h vs 5min
+          
+          if (timeSinceLastPing > timeout) {
+            if (hasActiveExecutions) {
+              console.log(`⏳ Cliente ${clientId} com execução ativa - mantendo conexão aberta`);
+              // Renovar lastPing para evitar timeout em execuções longas
+              client.lastPing = now;
+            } else {
+              console.log(`🔌 Desconectando cliente inativo: ${clientId} (${Math.round(timeSinceLastPing/60000)}min)`);
+              client.socket.close();
+              this.clients.delete(clientId);
+            }
           } else {
+            // Enviar ping normalmente
             client.socket.ping();
           }
-        } else {
-          this.clients.delete(clientId);
+        } catch (error) {
+          console.error(`Erro no heartbeat para cliente ${clientId}:`, error);
         }
-      });
+      }
     }, this.config.heartbeatInterval);
+  }
+
+  /**
+   * Verifica se cliente tem execuções ativas (agents ou crews)
+   */
+  private async checkActiveExecutions(clientId: string): Promise<boolean> {
+    try {
+      const activeExecutions = await this.stateManager.getActiveExecutions();
+      
+      // Verificar se este cliente está monitorando alguma execução ativa
+      const client = this.clients.get(clientId);
+      if (!client) return false;
+
+      // Verificar se alguma execução ativa está relacionada aos agentes/crews que o cliente está seguindo
+      for (const execId of activeExecutions) {
+        const execution = await this.stateManager.getExecutionStatus(execId);
+        if (execution) {
+          const entityId = execution.metadata?.agentId || execution.metadata?.crewId;
+          if (entityId) {
+            if (client.subscriptions.agents.has(entityId) || client.subscriptions.crews.has(entityId)) {
+              return true;
+            }
+          }
+        }
+      }
+
+      return false;
+    } catch (error) {
+      console.error('Erro ao verificar execuções ativas:', error);
+      return false;
+    }
   }
 
   /**

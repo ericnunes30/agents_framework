@@ -146,13 +146,7 @@ export class StreamingManager extends EventEmitter {
     }
   }
 
-  broadcastSystemUpdate(data: any): void {
-    const message: WebSocketMessage = {
-      type: 'system_update',
-      data,
-      timestamp: new Date()
-    };
-
+  broadcast(message: WebSocketMessage): void {
     for (const [clientId, client] of this.clients.entries()) {
       if (client.socket.readyState === WebSocket.OPEN) {
         try {
@@ -163,6 +157,16 @@ export class StreamingManager extends EventEmitter {
         }
       }
     }
+  }
+
+  broadcastSystemUpdate(data: any): void {
+    const message: WebSocketMessage = {
+      type: 'system_update',
+      data,
+      timestamp: new Date()
+    };
+
+    this.broadcast(message);
   }
 
   getSubscriptionStats(): {

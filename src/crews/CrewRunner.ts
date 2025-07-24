@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import { Crew } from './Crew.js';
 import { CrewDefinition } from '../config/schemas.js';
 import { Agent } from '../agents/Agent.js';
@@ -8,12 +9,13 @@ import { AgentRunner } from '../agents/AgentRunner.js';
 /**
  * Crew runner for creating and managing crew instances
  */
-export class CrewRunner {
+export class CrewRunner extends EventEmitter {
   private stateManager: StateManager;
   private agentRunner: AgentRunner;
   private crews: Map<string, Crew> = new Map();
 
   constructor(stateManager: StateManager, agentRunner: AgentRunner) {
+    super();
     this.stateManager = stateManager;
     this.agentRunner = agentRunner;
   }
@@ -40,6 +42,9 @@ export class CrewRunner {
 
     const crew = new Crew(crewDefinition, agents, this.stateManager);
     this.crews.set(crewDefinition.id, crew);
+
+    // Connect crew events to runner events
+    this.setupCrewEventForwarding(crew);
 
     // Save initial state
     await this.stateManager.saveCrewState(crewDefinition.id, crew.getState());
@@ -142,6 +147,47 @@ export class CrewRunner {
       await crew.cancel();
       this.crews.delete(crewId);
     }
+  }
+
+  /**
+   * Setup event forwarding from crew to runner
+   */
+  private setupCrewEventForwarding(crew: Crew): void {
+    crew.on('crew_started', (data: any) => {
+      this.emit('crew_started', { crewId: crew.definition.id, ...data });
+    });
+
+    crew.on('crew_progress', (data: any) => {
+      this.emit('crew_progress', { crewId: crew.definition.id, ...data });
+    });
+
+    crew.on('crew_completed', (data: any) => {
+      this.emit('crew_completed', { crewId: crew.definition.id, ...data });
+    });
+
+    crew.on('crew_failed', (data: any) => {
+      this.emit('crew_failed', { crewId: crew.definition.id, ...data });
+    });
+
+    crew.on('task_started', (data: any) => {
+      this.emit('crew_progress', { 
+        crewId: crew.definition.id, 
+        currentTask: data.taskId,
+        progress: data.progress || 0,
+        status: 'running',
+        ...data 
+      });
+    });
+
+    crew.on('task_completed', (data: any) => {
+      this.emit('crew_progress', { 
+        crewId: crew.definition.id, 
+        currentTask: data.taskId,
+        progress: data.progress || 0,
+        status: 'running',
+        ...data 
+      });
+    });
   }
 
   /**

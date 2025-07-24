@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { AgentRunner } from '../../agents/AgentRunner.js';
 import { RedisService } from '../services/RedisService.js';
-import { validate, executionRequestSchema } from '../middleware/validation.js';
+import { validate, executionRequestSchema, agentExecutionSchema } from '../middleware/validation.js';
 import { ExecutionRequest, ExecutionMetadata } from '../types.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -131,21 +131,117 @@ export const createAgentsRouter = (agentRunner: AgentRunner, redisService: Redis
     }
   });
 
-  // Execute task with agent (backward compatibility)
-  router.post('/:agentId/execute', async (req: Request, res: Response) => {
+  // Execute task with agent (with optional HTTP streaming)
+  router.post('/:agentId/execute', validate(agentExecutionSchema), async (req: Request, res: Response) => {
     try {
-      const { task, context } = req.body;
-      if (!task) {
-        return res.status(400).json({ error: 'task is required' });
+      const { task, context, stream } = req.body;
+      const agentId = req.params.agentId;
+
+      // Check if agent exists
+      const agent = agentRunner.getAgent(agentId);
+      if (!agent) {
+        return res.status(404).json({ error: 'Agent not found' });
       }
 
-      const result = await agentRunner.executeTask(
-        req.params.agentId,
-        task,
-        context || {}
-      );
+      if (stream) {
+        // HTTP Streaming via Server-Sent Events
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Cache-Control'
+        });
 
-      res.json({ result });
+        // Send initial connection event
+        res.write(`data: ${JSON.stringify({
+          type: 'connected',
+          timestamp: new Date(),
+          agentId: agentId
+        })}\n\n`);
+
+        let accumulatedContent = '';
+
+        // Listen for streaming events from the agent
+        const streamHandler = (data: any) => {
+          if (data.agentId === agentId) {
+            accumulatedContent += data.content;
+            res.write(`data: ${JSON.stringify({
+              type: 'stream',
+              content: data.content,
+              accumulated: accumulatedContent,
+              timestamp: new Date()
+            })}\n\n`);
+          }
+        };
+
+        const completedHandler = (data: any) => {
+          if (data.agentId === agentId) {
+            res.write(`data: ${JSON.stringify({
+              type: 'completed',
+              result: data.result,
+              timestamp: new Date()
+            })}\n\n`);
+            res.write(`data: [DONE]\n\n`);
+            res.end();
+            
+            // Clean up listeners
+            agentRunner.off('agent_stream', streamHandler);
+            agentRunner.off('agent_completed', completedHandler);
+            agentRunner.off('agent_failed', failedHandler);
+          }
+        };
+
+        const failedHandler = (data: any) => {
+          if (data.agentId === agentId) {
+            res.write(`data: ${JSON.stringify({
+              type: 'error',
+              error: data.error,
+              timestamp: new Date()
+            })}\n\n`);
+            res.write(`data: [DONE]\n\n`);
+            res.end();
+            
+            // Clean up listeners
+            agentRunner.off('agent_stream', streamHandler);
+            agentRunner.off('agent_completed', completedHandler);
+            agentRunner.off('agent_failed', failedHandler);
+          }
+        };
+
+        // Set up event listeners
+        agentRunner.on('agent_stream', streamHandler);
+        agentRunner.on('agent_completed', completedHandler);
+        agentRunner.on('agent_failed', failedHandler);
+
+        // Handle client disconnect
+        req.on('close', () => {
+          agentRunner.off('agent_stream', streamHandler);
+          agentRunner.off('agent_completed', completedHandler);
+          agentRunner.off('agent_failed', failedHandler);
+        });
+
+        // Start the execution
+        agentRunner.executeTask(agentId, task, context || {}).catch((error) => {
+          res.write(`data: ${JSON.stringify({
+            type: 'error',
+            error: error.message,
+            timestamp: new Date()
+          })}\n\n`);
+          res.write(`data: [DONE]\n\n`);
+          res.end();
+        });
+
+      } else {
+        // Regular non-streaming execution
+        const result = await agentRunner.executeTask(
+          agentId,
+          task,
+          context || {}
+        );
+
+        res.json({ result });
+      }
     } catch (error) {
       res.status(500).json({
         error: error instanceof Error ? error.message : String(error)

@@ -1,5 +1,9 @@
+import dotenv from 'dotenv';
 import { BaseClient } from './BaseClient.js';
 import { ChatMessage, ChatResponse, StreamResponse, LLMRequestConfig } from './types.js';
+
+// Load environment variables
+dotenv.config();
 
 /**
  * OpenAI HTTP API client implementation
@@ -34,7 +38,7 @@ export class OpenAIClient extends BaseClient {
       frequency_penalty: config.frequencyPenalty,
       presence_penalty: config.presencePenalty,
       stop: config.stop,
-      stream: false
+      stream: config.stream ?? false
     };
 
     return await this.makeRequest('/chat/completions', payload);
@@ -53,7 +57,7 @@ export class OpenAIClient extends BaseClient {
       frequency_penalty: config.frequencyPenalty,
       presence_penalty: config.presencePenalty,
       stop: config.stop,
-      stream: true
+      stream: config.stream ?? true
     };
 
     const response = await fetch(`${this.baseURL}/chat/completions`, {

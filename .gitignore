@@ -6,6 +6,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 configs/*
+docs/*
+
 # Build outputs
 dist/
 build/
@@ -66,3 +68,13 @@ test-results/
 # Test outputs
 test-results.xml
 junit.xml
+
+# Test files (temporary - not for commit)
+test-websocket.js
+test-streaming.js
+test-http-streaming.js
+test-curl-examples.md
+*websocket-test*
+*streaming-test*
+*test-*.js
+*test-*.md
