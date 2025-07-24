@@ -90,8 +90,7 @@ export class ConfigLoader {
     }
 
     const files = readdirSync(crewsDir)
-      .filter((file: string) => file.endsWith('.yaml') || file.endsWith('.yml'))
-      .map((file: string) => join('crews', file));
+      .filter((file: string) => file.endsWith('.yaml') || file.endsWith('.yml'));
 
     return files.map((file: string) => this.loadCrewConfig(file));
   }
