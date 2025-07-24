@@ -212,7 +212,7 @@ export class AgentFrameworkServer {
     this.app.get('/api/agents/active', async (req, res) => {
       try {
         const activeExecutions = await this.stateManager.getActiveExecutions();
-        const agentExecutions = activeExecutions.filter(id => id.startsWith('agent_'));
+        const agentExecutions = activeExecutions.filter((id: string) => id.startsWith('agent_'));
         res.json({
           executions: agentExecutions
         });

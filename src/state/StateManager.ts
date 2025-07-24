@@ -504,6 +504,135 @@ export class StateManager extends EventEmitter {
   }
 
   /**
+   * Create execution tracking
+   */
+  async createExecution(type: string, metadata: any, ttl: number = 3600): Promise<string> {
+    const executionId = `${type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const execution = {
+      id: executionId,
+      type,
+      status: 'pending',
+      progress: 0,
+      currentStep: 'initializing',
+      metadata,
+      startTime: new Date().toISOString(),
+      createdAt: Date.now()
+    };
+    
+    const key = `execution:${executionId}`;
+    await this.redis.setex(key, ttl, JSON.stringify(execution));
+    
+    return executionId;
+  }
+
+  /**
+   * Update execution status
+   */
+  async updateExecutionStatus(
+    executionId: string,
+    status: string,
+    progress?: number,
+    currentStep?: string,
+    result?: any,
+    error?: string
+  ): Promise<void> {
+    const key = `execution:${executionId}`;
+    const existing = await this.redis.get(key);
+    
+    if (!existing) {
+      throw new Error(`Execution ${executionId} not found`);
+    }
+    
+    const execution = JSON.parse(existing);
+    execution.status = status;
+    
+    if (progress !== undefined) {
+      execution.progress = progress;
+    }
+    
+    if (currentStep) {
+      execution.currentStep = currentStep;
+    }
+    
+    if (result !== undefined) {
+      execution.result = result;
+    }
+    
+    if (error) {
+      execution.error = error;
+    }
+    
+    if (status === 'completed' || status === 'failed') {
+      execution.endTime = new Date().toISOString();
+      execution.completedAt = Date.now();
+    }
+    
+    execution.updatedAt = Date.now();
+    
+    await this.redis.setex(key, this.config.ttl!, JSON.stringify(execution));
+  }
+
+  /**
+   * Get execution status
+   */
+  async getExecutionStatus(executionId: string): Promise<any> {
+    const key = `execution:${executionId}`;
+    const data = await this.redis.get(key);
+    
+    if (!data) {
+      return null;
+    }
+    
+    return JSON.parse(data);
+  }
+
+  /**
+   * Get execution result
+   */
+  async getExecutionResult(executionId: string): Promise<any> {
+    const execution = await this.getExecutionStatus(executionId);
+    
+    if (!execution || execution.status !== 'completed') {
+      return null;
+    }
+    
+    return {
+      executionId,
+      result: execution.result,
+      metadata: execution.metadata,
+      executionTime: execution.completedAt - execution.createdAt,
+      completedAt: execution.endTime
+    };
+  }
+
+  /**
+   * Get active executions
+   */
+  async getActiveExecutions(): Promise<string[]> {
+    const keys = await this.redis.keys('execution:*');
+    const activeExecutions: string[] = [];
+    
+    for (const key of keys) {
+      const data = await this.redis.get(key);
+      if (data) {
+        const execution = JSON.parse(data);
+        if (execution.status === 'running' || execution.status === 'pending') {
+          activeExecutions.push(execution.id);
+        }
+      }
+    }
+    
+    return activeExecutions;
+  }
+
+  /**
+   * Increment completed count
+   */
+  async incrementCompletedCount(): Promise<void> {
+    await this.redis.incr('stats:completed_count');
+  }
+
+  /**
    * Close Redis connections
    */
   async close(): Promise<void> {
