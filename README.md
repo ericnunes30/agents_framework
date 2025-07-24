@@ -26,6 +26,26 @@ cp .env.example .env
 npm run dev
 ```
 
+### 🔄 Inicialização Automática
+
+O servidor carrega automaticamente todos os agentes e crews dos diretórios de configuração:
+
+- **Agentes**: `configs/agents/*.yaml` - Carregados automaticamente na inicialização
+- **Crews**: `configs/crews/*.yaml` - Carregados automaticamente após os agentes
+
+```
+🔄 Starting Hybrid Agent Framework Server...
+Initializing 8 agents from configuration...
+✓ Agent 'problem-analyzer' initialized successfully
+✓ Agent 'solution-architect' initialized successfully
+...
+Initializing 4 crews from configuration...
+✓ Crew 'prp-generator-team' initialized successfully
+...
+```
+
+Não é mais necessário criar agentes e crews via API - eles ficam disponíveis imediatamente após o startup.
+
 ## 🌐 Integração HTTP e WebSocket
 
 O Agent Framework oferece duas formas principais de integração:
@@ -57,12 +77,21 @@ curl http://localhost:3000/api/agents/results/agent_12345
 
 #### Execução de Crew
 ```bash
-# Executar crew
-curl -X POST http://localhost:3000/api/crews/execute \
+# Executar crew diretamente pelo ID (crew já inicializado automaticamente)
+curl -X POST http://localhost:3000/api/crews/prp-generator-team/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "configPath": "examples/crews/research-crew.yaml",
-    "input": "Tema da pesquisa"
+    "input": "Problema de instabilidade no servidor de produção"
+  }'
+
+# Listar crews disponíveis
+curl http://localhost:3000/api/crews
+
+# Executar outros crews
+curl -X POST http://localhost:3000/api/crews/research-team/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "Inteligência Artificial e Machine Learning"
   }'
 ```
 
