@@ -82,6 +82,27 @@ export class AgentRunner {
   }
 
   /**
+   * Initialize all agents from configuration files
+   */
+  async initializeAllAgents(): Promise<void> {
+    try {
+      const agentConfigs = ConfigLoader.loadAllAgents();
+      console.log(`Initializing ${agentConfigs.length} agents from configuration...`);
+      
+      for (const config of agentConfigs) {
+        try {
+          await this.createAgent(config);
+          console.log(`✓ Agent '${config.id}' initialized successfully`);
+        } catch (error) {
+          console.warn(`⚠ Failed to initialize agent '${config.id}':`, error instanceof Error ? error.message : String(error));
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load agent configurations:', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /**
    * List all registered agents
    */
   listAgents(): string[] {

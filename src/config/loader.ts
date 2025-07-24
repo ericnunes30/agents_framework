@@ -72,8 +72,7 @@ export class ConfigLoader {
     }
 
     const files = readdirSync(agentsDir)
-      .filter((file: string) => file.endsWith('.yaml') || file.endsWith('.yml'))
-      .map((file: string) => join('agents', file));
+      .filter((file: string) => file.endsWith('.yaml') || file.endsWith('.yml'));
 
     return files.map((file: string) => this.loadAgentConfig(file));
   }

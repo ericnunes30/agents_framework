@@ -68,8 +68,9 @@ export class HybridAgentFrameworkServer {
     await this.redis.subscriber.connect();
     await this.redis.publisher.connect();
 
-    // Initialize core services
-    this.stateManager = new StateManager();
+    // Initialize core services with existing Redis connections
+    this.stateManager = new StateManager(this.redis);
+    
     this.agentRunner = new AgentRunner(this.stateManager);
     this.crewRunner = new CrewRunner(this.stateManager, this.agentRunner);
     this.mcpClient = new MCPClient();
@@ -87,6 +88,12 @@ export class HybridAgentFrameworkServer {
     this.mcpClient.configureFromEnvironment().catch(error => {
       console.warn('Failed to configure external MCP servers:', error);
     });
+
+    // Initialize all agents from configuration files (after Redis is ready)
+    await this.agentRunner.initializeAllAgents();
+
+    // Initialize all crews from configuration files (after agents are ready)
+    await this.crewRunner.initializeAllCrews();
 
     // Initialize WebSocket server with streaming manager
     this.wsServer = new WebSocketServer(this.server, this.stateManager);

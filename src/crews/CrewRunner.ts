@@ -89,6 +89,10 @@ export class CrewRunner {
     input: string, 
     context: Record<string, any>
   ): Promise<Record<string, any>> {
+    console.log(`🔍 DEBUG: Looking for crew '${crewId}'`);
+    console.log(`🔍 DEBUG: Available crews:`, Array.from(this.crews.keys()));
+    console.log(`🔍 DEBUG: Total crews registered:`, this.crews.size);
+    
     const crew = this.crews.get(crewId);
     if (!crew) {
       throw new Error(`Crew not found: ${crewId}`);
@@ -137,6 +141,27 @@ export class CrewRunner {
     if (crew) {
       await crew.cancel();
       this.crews.delete(crewId);
+    }
+  }
+
+  /**
+   * Initialize all crews from configuration files
+   */
+  async initializeAllCrews(): Promise<void> {
+    try {
+      const crewConfigs = ConfigLoader.loadAllCrews();
+      console.log(`Initializing ${crewConfigs.length} crews from configuration...`);
+      
+      for (const config of crewConfigs) {
+        try {
+          await this.createCrew(config);
+          console.log(`✓ Crew '${config.id}' initialized successfully`);
+        } catch (error) {
+          console.warn(`⚠ Failed to initialize crew '${config.id}':`, error instanceof Error ? error.message : String(error));
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load crew configurations:', error instanceof Error ? error.message : String(error));
     }
   }
 

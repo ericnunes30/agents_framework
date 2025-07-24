@@ -496,6 +496,12 @@ export class AgentFrameworkServer {
     // Initialize WebSocket server
     this.wsServer = new WebSocketServer(this.server, this.stateManager);
 
+    // Initialize all agents from configuration files
+    await this.agentRunner.initializeAllAgents();
+
+    // Initialize all crews from configuration files
+    await this.crewRunner.initializeAllCrews();
+
     // MCP Client is initialized and ready for external connections
 
     console.log('Agent Framework server initialized');

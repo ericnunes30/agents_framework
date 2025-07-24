@@ -22,7 +22,7 @@ export class StateManager extends EventEmitter {
   private config: StateConfig;
 
   constructor(
-    redisUrl: string = process.env.REDIS_URL || 'redis://localhost:6379',
+    redisUrlOrConnections?: string | { main: Redis; subscriber: Redis; publisher: Redis },
     config: StateConfig = {}
   ) {
     super();
@@ -34,22 +34,35 @@ export class StateManager extends EventEmitter {
       ...config
     };
 
-    // Main Redis connection for operations
-    this.redis = new Redis(redisUrl, {
-      retryStrategy: (times) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-      },
-      maxRetriesPerRequest: 3,
-      lazyConnect: true
-    });
+    if (redisUrlOrConnections && typeof redisUrlOrConnections === 'object') {
+      // Use existing connections
+      this.redis = redisUrlOrConnections.main;
+      this.subscriber = redisUrlOrConnections.subscriber;
+      this.publisher = redisUrlOrConnections.publisher;
+      this.connected = true; // Assume already connected
+    } else {
+      // Create new connections
+      const redisUrl = (redisUrlOrConnections as string) || process.env.REDIS_URL || 'redis://localhost:6379';
+      
+      // Main Redis connection for operations
+      this.redis = new Redis(redisUrl, {
+        retryStrategy: (times) => {
+          const delay = Math.min(times * 50, 2000);
+          return delay;
+        },
+        maxRetriesPerRequest: 3,
+        lazyConnect: true
+      });
 
-    // Separate connections for pub/sub
-    this.subscriber = new Redis(redisUrl, { lazyConnect: true });
-    this.publisher = new Redis(redisUrl, { lazyConnect: true });
+      // Separate connections for pub/sub
+      this.subscriber = new Redis(redisUrl, { lazyConnect: true });
+      this.publisher = new Redis(redisUrl, { lazyConnect: true });
+    }
 
     this.setupEventHandlers();
-    this.connect();
+    if (!this.connected) {
+      this.connect();
+    }
   }
 
   /**
